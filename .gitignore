@@ -1,0 +1,20 @@
+# Qt生成临时文件
+*.pro.user
+*.pro.user.*
+CMakeBuild*/
+build*/
+*/build-*
+*.moc
+*.obj
+*.o
+*.exe
+*.log
+*.tmp
+*.autogen
+# qt qmake中间文件
+Makefile*
+# Qt Creator IDE本地配置，不要提交IDE设置
+.qtcreator/
+# CMake生成文件
+CMakeCache.txt
+CMakeFiles/
