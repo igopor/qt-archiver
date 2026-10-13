@@ -2,13 +2,16 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+#include <QString>
+#include <QStringList>
+#include <QModelIndex>
 
 QT_BEGIN_NAMESPACE
 class QAction;
 class QLabel;
 class QLineEdit;
 class QMenu;
-class QStandardItemModel;
+class QFileSystemModel;
 class QTableView;
 class QToolBar;
 QT_END_NAMESPACE
@@ -21,16 +24,28 @@ public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
 
+private slots:
+    // ---- 阶段 2：导航相关槽函数 ----
+    void navGoUp();
+    void navGoBack();
+    void navGoForward();
+    void onRefresh();
+    void onFileDoubleClicked(const QModelIndex &index);
+    void onAddressReturnPressed();
+
 private:
-    // 把搭建过程拆成 5 个小函数，方便和子步骤一一对照
-    void createActions();          // 子步骤 3 的前置：先把 QAction 造出来
-    void createMenus();            // 子步骤 3：菜单栏
-    void createToolBars();         // 子步骤 4：工具栏
-    void createCentralWidget();    // 子步骤 2 + 5：中央部件（地址栏 + 文件列表占位）
-    void createStatusBar();        // 子步骤 6：状态栏
+    void createActions();
+    void createMenus();
+    void createToolBars();
+    void createCentralWidget();
+    void createStatusBar();
+    void createConnections();          // 阶段 2 新增：集中连接信号槽
     void updateActionEnableState();
 
-    // ---------- QAction（动作对象，不是控件！）----------
+    // 阶段 2 新增：统一的目录切换入口
+    void changeDirectory(const QString &newPath, bool recordHistory = true);
+
+    // ---------- QAction ----------
     QAction *actOpen        = nullptr;
     QAction *actNewArchive  = nullptr;
     QAction *actExtract     = nullptr;
@@ -39,6 +54,8 @@ private:
 
     QAction *actUp          = nullptr;
     QAction *actRefresh     = nullptr;
+    QAction *actBack        = nullptr;   // 阶段 2 新增
+    QAction *actForward     = nullptr;   // 阶段 2 新增
 
     QAction *actSelectAll   = nullptr;
     QAction *actInvertSel   = nullptr;
@@ -58,13 +75,18 @@ private:
     QToolBar *mainToolBar = nullptr;
 
     // ---------- 中央部件内部控件 ----------
-    QLineEdit          *addressEdit   = nullptr;
-    QTableView         *fileListView  = nullptr;
-    QStandardItemModel *fileModel     = nullptr;
+    QLineEdit        *addressEdit     = nullptr;
+    QTableView       *fileListView    = nullptr;
+    QFileSystemModel *fileSystemModel = nullptr;   // 阶段 2：替换 QStandardItemModel
 
     // ---------- 状态栏 ----------
-    QLabel *selectionLabel = nullptr;   // 左侧：选中信息
-    QLabel *diskLabel      = nullptr;   // 右侧：磁盘信息
+    QLabel *selectionLabel = nullptr;
+    QLabel *diskLabel      = nullptr;
+
+    // ---------- 阶段 2：导航状态 ----------
+    QStringList m_navHistory;     // 导航历史栈
+    int         m_navIndex = -1;  // 当前在历史栈的位置；-1 表示空历史
+    QString     m_currentPath;    // 当前浏览路径
 };
 
 #endif // MAINWINDOW_H

@@ -1,12 +1,15 @@
 #include "mainwindow.h"
 
 #include <QAction>
+#include <QDir>
+#include <QFileInfo>
+#include <QFileSystemModel>
 #include <QHeaderView>
+#include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
-#include <QStandardItemModel>
 #include <QStatusBar>
 #include <QTableView>
 #include <QToolBar>
@@ -24,6 +27,9 @@ MainWindow::MainWindow(QWidget *parent)
     createToolBars();       // 子步骤 4
     createCentralWidget();  // 子步骤 2 + 5
     createStatusBar();      // 子步骤 6
+
+    createConnections();          // 阶段 2 新增
+    updateActionEnableState();    // 初始状态：导航按钮全禁用
 
     setWindowTitle(tr("小小小压缩工具_igp"));
     resize(960, 620);
@@ -49,6 +55,10 @@ void MainWindow::createActions()
     // ---- 导航 / 查看 ----
     actUp         = new QAction(tr("向上(&U)"), this);
     actRefresh    = new QAction(tr("刷新(&R)"), this);
+    actBack    = new QAction(tr("后退(&B)"), this);
+    actForward = new QAction(tr("前进(&F)"), this);
+    actBack->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Left));
+    actForward->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Right));
 
     // ---- 编辑 ----
     actSelectAll  = new QAction(tr("全选(&A)"), this);
@@ -90,6 +100,9 @@ void MainWindow::createMenus()
 
     // ---- 查看(&V) ----
     menuView = bar->addMenu(tr("查看(&V)"));
+    menuView->addAction(actBack);
+    menuView->addAction(actForward);
+    menuView->addSeparator();
     menuView->addAction(actUp);
     menuView->addAction(actRefresh);
 
@@ -114,11 +127,16 @@ void MainWindow::createToolBars()
     mainToolBar->setToolButtonStyle(Qt::ToolButtonTextOnly); // 本阶段不用图标，纯文字按钮
 
     // 复用菜单里已经建好的 QAction —— 这就是 QAction 存在的意义
+    mainToolBar->addAction(actBack);
+    mainToolBar->addAction(actForward);
     mainToolBar->addAction(actUp);
+    mainToolBar->addSeparator();
+
     mainToolBar->addAction(actOpen);
     mainToolBar->addAction(actNewArchive);
     mainToolBar->addAction(actExtract);
     mainToolBar->addAction(actTest);
+
     mainToolBar->addSeparator();
     mainToolBar->addAction(actRefresh);
 }
@@ -131,37 +149,38 @@ void MainWindow::createToolBars()
 // ============================================================
 void MainWindow::createCentralWidget()
 {
-    // ---- 子步骤 2：中央部件 + 垂直布局 ----
     QWidget *central = new QWidget(this);
-    setCentralWidget(central);          // ← 忘了这句，里面所有控件都看不见
+    setCentralWidget(central);
 
     QVBoxLayout *vLayout = new QVBoxLayout(central);
-    vLayout->setContentsMargins(4, 4, 4, 4);   // 四周留白
-    vLayout->setSpacing(4);                    // 控件之间的缝隙
+    vLayout->setContentsMargins(4, 4, 4, 4);
+    vLayout->setSpacing(4);
 
-    // ---- 子步骤 5：地址栏 ----
+    // ---- 地址栏 ----
     addressEdit = new QLineEdit(central);
     addressEdit->setPlaceholderText(tr("当前路径"));
     addressEdit->setClearButtonEnabled(true);
-    vLayout->addWidget(addressEdit);    // stretch 默认 0：只占自己需要的高度
+    vLayout->addWidget(addressEdit);
 
-    // ---- 子步骤 5：文件列表占位 ----
+    // ---- 文件列表 ----
     fileListView = new QTableView(central);
 
-    // 只是为了让占位看起来像 7-Zip，给个空表头；不接任何数据逻辑
-    fileModel = new QStandardItemModel(0, 4, this);   // 0 行 4 列 → 表格是空的
-    fileModel->setHorizontalHeaderLabels({ tr("名称"), tr("大小"),
-                                          tr("修改日期"), tr("属性") });
-    fileListView->setModel(fileModel);
+    // 阶段 2：用 QFileSystemModel 替换 QStandardItemModel
+    fileSystemModel = new QFileSystemModel(this);
+    fileSystemModel->setReadOnly(true);
+    fileSystemModel->setFilter(QDir::AllEntries | QDir::NoDotAndDotDot);
+    // 初始空路径：模型根为空，表格显示为空
+    fileSystemModel->setRootPath(QString());
 
-    // 一些"看起来像样"的静态属性（都不涉及业务逻辑）
+    fileListView->setModel(fileSystemModel);
+
     fileListView->setSelectionBehavior(QAbstractItemView::SelectRows);
     fileListView->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    fileListView->setEditTriggers(QAbstractItemView::NoEditTriggers);  // 静态界面，禁止编辑
-    fileListView->verticalHeader()->setVisible(false);                 // 隐藏左侧行号
-    fileListView->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch); // 名称列自动撑开
+    fileListView->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    fileListView->verticalHeader()->setVisible(false);
+    fileListView->horizontalHeader()->setStretchLastSection(true);
 
-    vLayout->addWidget(fileListView, 1);  // stretch = 1 → 吃掉剩余全部空间
+    vLayout->addWidget(fileListView, 1);
 }
 
 // ============================================================
@@ -182,13 +201,158 @@ void MainWindow::createStatusBar()
     statusBar()->addPermanentWidget(diskLabel, 0);
 
     // 视觉上让两个标签和状态栏边缘有点呼吸感（纯装饰）
-    statusBar()->setStyleSheet(
-        "QStatusBar { padding: 0 4px; }"
-        "QStatusBar QLabel { padding: 0 6px; }"
-        );
+    // statusBar()->setStyleSheet(
+    //     "QStatusBar { padding: 0 4px; }"
+    //     "QStatusBar QLabel { padding: 0 6px; }"
+    //     );
+}
+
+void MainWindow::createConnections()
+{
+    connect(actUp,      &QAction::triggered, this, &MainWindow::navGoUp);
+    connect(actBack,    &QAction::triggered, this, &MainWindow::navGoBack);
+    connect(actForward, &QAction::triggered, this, &MainWindow::navGoForward);
+    connect(actRefresh, &QAction::triggered, this, &MainWindow::onRefresh);
+
+    connect(fileListView, &QTableView::doubleClicked,
+            this, &MainWindow::onFileDoubleClicked);
+
+    connect(addressEdit, &QLineEdit::returnPressed,
+            this, &MainWindow::onAddressReturnPressed);
+}
+
+void MainWindow::changeDirectory(const QString &newPath, bool recordHistory)
+{
+    if (newPath.trimmed().isEmpty()) {
+        return;
+    }
+
+    QFileInfo info(newPath);
+    if (!info.exists() || !info.isDir()) {
+        return;
+    }
+
+    const QString cleanPath = QDir::cleanPath(info.absoluteFilePath());
+
+    // 让模型监控该目录，并把视图根设为该目录
+    fileSystemModel->setRootPath(cleanPath);
+    const QModelIndex rootIndex = fileSystemModel->index(cleanPath);
+    if (!rootIndex.isValid()) {
+        return;
+    }
+    fileListView->setRootIndex(rootIndex);
+
+    m_currentPath = cleanPath;
+    addressEdit->setText(cleanPath);
+
+    // ---- 历史栈处理 ----
+    if (recordHistory) {
+        const bool sameAsCurrent =
+            m_navIndex >= 0
+            && m_navIndex < m_navHistory.size()
+            && m_navHistory.at(m_navIndex) == cleanPath;
+
+        if (!sameAsCurrent) {
+            // 如果当前不在历史末尾，先截断后面的分支
+            while (m_navHistory.size() > m_navIndex + 1) {
+                m_navHistory.removeLast();
+            }
+            m_navHistory.append(cleanPath);
+            m_navIndex = m_navHistory.size() - 1;
+        }
+    }
+
+    updateActionEnableState();
 }
 
 void MainWindow::updateActionEnableState()
 {
-    // TODO 阶段3实现：根据选中项状态更新各个QAction启用/禁用
+    if (actBack) {
+        actBack->setEnabled(m_navIndex > 0);
+    }
+    if (actForward) {
+        actForward->setEnabled(m_navIndex >= 0
+                               && m_navIndex < m_navHistory.size() - 1);
+    }
+    if (actUp) {
+        if (m_currentPath.isEmpty()) {
+            actUp->setEnabled(false);
+        } else {
+            QDir dir(m_currentPath);
+            actUp->setEnabled(dir.cdUp());
+        }
+    }
+    if (actRefresh) {
+        actRefresh->setEnabled(!m_currentPath.isEmpty());
+    }
+    // 选中状态相关逻辑留到阶段 3
+}
+
+void MainWindow::navGoUp()
+{
+    if (m_currentPath.isEmpty()) {
+        return;
+    }
+    QDir dir(m_currentPath);
+    if (dir.cdUp()) {
+        changeDirectory(dir.absolutePath());
+    }
+}
+
+void MainWindow::onFileDoubleClicked(const QModelIndex &index)
+{
+    if (!index.isValid()) {
+        return;
+    }
+    if (fileSystemModel->isDir(index)) {
+        const QString path = fileSystemModel->filePath(index);
+        changeDirectory(path);
+    }
+    // 双击文件：阶段 2 不做任何事
+}
+
+void MainWindow::onAddressReturnPressed()
+{
+    const QString path = addressEdit->text().trimmed();
+    if (path.isEmpty()) {
+        return;
+    }
+    QFileInfo info(path);
+    if (info.exists() && info.isDir()) {
+        changeDirectory(path);
+    }
+    // 非法路径：阶段 2 简单忽略，不弹窗
+}
+
+void MainWindow::navGoBack()
+{
+    if (m_navIndex <= 0) {
+        return;
+    }
+    --m_navIndex;
+    changeDirectory(m_navHistory.at(m_navIndex), false);
+}
+
+void MainWindow::navGoForward()
+{
+    if (m_navIndex < 0 || m_navIndex >= m_navHistory.size() - 1) {
+        return;
+    }
+    ++m_navIndex;
+    changeDirectory(m_navHistory.at(m_navIndex), false);
+}
+
+void MainWindow::onRefresh()
+{
+    if (m_currentPath.isEmpty()) {
+        return;
+    }
+
+    const QString path = m_currentPath;
+    // 先清空 rootPath 触发模型重新枚举，再设回当前目录
+    fileSystemModel->setRootPath(QString());
+    fileSystemModel->setRootPath(path);
+    fileListView->setRootIndex(fileSystemModel->index(path));
+    addressEdit->setText(path);
+    updateActionEnableState();
 }
