@@ -14,6 +14,7 @@ class QMenu;
 class QFileSystemModel;
 class QTableView;
 class QToolBar;
+class QItemSelection;
 QT_END_NAMESPACE
 
 class MainWindow : public QMainWindow
@@ -32,6 +33,13 @@ private slots:
     void onRefresh();
     void onFileDoubleClicked(const QModelIndex &index);
     void onAddressReturnPressed();
+    // ---- 阶段3
+    void onSelectionChanged(const QItemSelection &selected,
+                            const QItemSelection &deselected);
+    void onSelectAll();
+    void onInvertSelection();
+    void onCopy();
+    void onOpen();
 
 private:
     void createActions();
@@ -41,6 +49,8 @@ private:
     void createStatusBar();
     void createConnections();          // 阶段 2 新增：集中连接信号槽
     void updateActionEnableState();
+    void openIndex(const QModelIndex &index);
+    QString formatSize(qint64 bytes) const;   //阶段3
 
     // 阶段 2 新增：统一的目录切换入口
     void changeDirectory(const QString &newPath, bool recordHistory = true);

@@ -15,6 +15,10 @@
 #include <QToolBar>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <QItemSelection>
+#include <QItemSelectionModel>
+#include <QDesktopServices>
+#include <QUrl>
 
 // ============================================================
 // 构造函数：整个窗口在这里被"搭"出来
@@ -33,7 +37,36 @@ MainWindow::MainWindow(QWidget *parent)
 
     setWindowTitle(tr("小小小压缩工具_igp"));
     resize(960, 620);
+
+    //阶段3优化：QSS初尝试
+    QString qss = R"(
+/* ========== 文件列表 QTableView ==========
+ * 可改：圆角、内边距、表格线颜色、背景
+ * 注意：viewport 用来解决圆角被滚动区域裁剪问题
+*/
+QTableView {
+    border: 0px solid #d0d5dd;
+    border-radius: 0px;
+    padding: 0px 0px;
+
 }
+QTableView::viewport {
+    border-radius: 0px;
+}
+
+/* ========== 工具栏 QToolBar ==========
+ * 可改：背景色、内边距、控件间距
+*/
+QToolBar {
+    border: none;
+    padding: 4px;
+    spacing: 4px;
+}
+
+)";
+    this->setStyleSheet(qss);
+}
+
 
 MainWindow::~MainWindow() = default;   // 对象树自动回收，不需要手写 delete
 
@@ -200,11 +233,6 @@ void MainWindow::createStatusBar()
     diskLabel = new QLabel(tr("可用空间 --"), statusBar());
     statusBar()->addPermanentWidget(diskLabel, 0);
 
-    // 视觉上让两个标签和状态栏边缘有点呼吸感（纯装饰）
-    // statusBar()->setStyleSheet(
-    //     "QStatusBar { padding: 0 4px; }"
-    //     "QStatusBar QLabel { padding: 0 6px; }"
-    //     );
 }
 
 void MainWindow::createConnections()
@@ -219,6 +247,15 @@ void MainWindow::createConnections()
 
     connect(addressEdit, &QLineEdit::returnPressed,
             this, &MainWindow::onAddressReturnPressed);
+
+    connect(fileListView->selectionModel(),
+            &QItemSelectionModel::selectionChanged,
+            this, &MainWindow::onSelectionChanged);
+
+    connect(actSelectAll, &QAction::triggered, this, &MainWindow::onSelectAll);
+    connect(actInvertSel, &QAction::triggered, this, &MainWindow::onInvertSelection);
+    connect(actCopy,      &QAction::triggered, this, &MainWindow::onCopy);
+    connect(actOpen, &QAction::triggered, this, &MainWindow::onOpen);
 }
 
 void MainWindow::changeDirectory(const QString &newPath, bool recordHistory)
@@ -285,7 +322,21 @@ void MainWindow::updateActionEnableState()
     if (actRefresh) {
         actRefresh->setEnabled(!m_currentPath.isEmpty());
     }
-    // 选中状态相关逻辑留到阶段 3
+    // 选中状态相关逻辑-----阶段 3
+    QItemSelectionModel *sel = fileListView ? fileListView->selectionModel() : nullptr;
+    const int selCount = sel ? sel->selectedRows().size() : 0;
+
+    bool hasContent = false;
+    if (fileListView && fileSystemModel) {
+        hasContent = fileSystemModel->rowCount(fileListView->rootIndex()) > 0;
+    }
+
+    if (actSelectAll) actSelectAll->setEnabled(hasContent);
+    if (actInvertSel) actInvertSel->setEnabled(hasContent);
+    if (actCopy)      actCopy->setEnabled(selCount > 0);
+    if (actExtract)   actExtract->setEnabled(selCount > 0);
+    if (actTest)      actTest->setEnabled(selCount > 0);
+    if (actOpen)      actOpen->setEnabled(selCount == 1);
 }
 
 void MainWindow::navGoUp()
@@ -301,14 +352,7 @@ void MainWindow::navGoUp()
 
 void MainWindow::onFileDoubleClicked(const QModelIndex &index)
 {
-    if (!index.isValid()) {
-        return;
-    }
-    if (fileSystemModel->isDir(index)) {
-        const QString path = fileSystemModel->filePath(index);
-        changeDirectory(path);
-    }
-    // 双击文件：阶段 2 不做任何事
+    openIndex(index);
 }
 
 void MainWindow::onAddressReturnPressed()
@@ -355,4 +399,166 @@ void MainWindow::onRefresh()
     fileListView->setRootIndex(fileSystemModel->index(path));
     addressEdit->setText(path);
     updateActionEnableState();
+}
+
+QString MainWindow::formatSize(qint64 bytes) const
+{
+    if (bytes < 1024) {
+        return tr("%1 B").arg(bytes);
+    }
+
+    const double kb = bytes / 1024.0;
+    if (kb < 1024.0) {
+        return tr("%1 KB").arg(QString::number(kb, 'f', 1));
+    }
+
+    const double mb = kb / 1024.0;
+    if (mb < 1024.0) {
+        return tr("%1 MB").arg(QString::number(mb, 'f', 1));
+    }
+
+    const double gb = mb / 1024.0;
+    if (gb < 1024.0) {
+        return tr("%1 GB").arg(QString::number(gb, 'f', 1));
+    }
+
+    const double tb = gb / 1024.0;
+    return tr("%1 TB").arg(QString::number(tb, 'f', 1));
+}
+
+void MainWindow::onSelectionChanged(const QItemSelection &selected,
+                                    const QItemSelection &deselected)
+{
+    Q_UNUSED(selected);
+    Q_UNUSED(deselected);
+
+    if (!selectionLabel) {
+        return;
+    }
+
+    QItemSelectionModel *sel = fileListView ? fileListView->selectionModel() : nullptr;
+    if (!sel || !fileSystemModel) {
+        selectionLabel->setText(tr("0 个对象"));
+        updateActionEnableState();
+        return;
+    }
+
+    const QModelIndexList rows = sel->selectedRows();
+    int fileCount = 0;
+    int dirCount = 0;
+    qint64 totalSize = 0;
+
+    for (const QModelIndex &idx : rows) {
+        if (!idx.isValid()) {
+            continue;
+        }
+        if (fileSystemModel->isDir(idx)) {
+            ++dirCount;
+        } else {
+            ++fileCount;
+            totalSize += fileSystemModel->size(idx);
+        }
+    }
+
+    if (fileCount == 0 && dirCount == 0) {
+        selectionLabel->setText(tr("0 个对象"));      // D1：无选中恢复预设占位文本
+    } else {
+        selectionLabel->setText(tr("选中 %1 个文件，%2 个文件夹，共 %3")
+                                    .arg(fileCount)
+                                    .arg(dirCount)
+                                    .arg(formatSize(totalSize)));
+    }
+
+    updateActionEnableState();
+}
+
+void MainWindow::onSelectAll()
+{
+    if (!fileListView || !fileSystemModel) {
+        return;
+    }
+    QItemSelectionModel *sel = fileListView->selectionModel();
+    if (!sel) {
+        return;
+    }
+
+    const QModelIndex root = fileListView->rootIndex();
+    const int rows = fileSystemModel->rowCount(root);
+    if (rows <= 0) {
+        return;
+    }
+
+    const QModelIndex topLeft     = fileSystemModel->index(0, 0, root);
+    const QModelIndex bottomRight = fileSystemModel->index(rows - 1, 0, root);
+    if (!topLeft.isValid() || !bottomRight.isValid()) {
+        return;
+    }
+
+    QItemSelection selection(topLeft, bottomRight);
+    sel->select(selection,
+                QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+}
+
+void MainWindow::onInvertSelection()
+{
+    if (!fileListView || !fileSystemModel) {
+        return;
+    }
+    QItemSelectionModel *sel = fileListView->selectionModel();
+    if (!sel) {
+        return;
+    }
+
+    const QModelIndex root = fileListView->rootIndex();
+    const int rows = fileSystemModel->rowCount(root);
+
+    for (int r = 0; r < rows; ++r) {
+        const QModelIndex idx = fileSystemModel->index(r, 0, root);
+        if (!idx.isValid()) {
+            continue;
+        }
+        sel->select(idx, QItemSelectionModel::Toggle
+                             | QItemSelectionModel::Rows);
+    }
+}
+
+void MainWindow::onOpen()
+{
+    if (!fileListView) {
+        return;
+    }
+    QItemSelectionModel *sel = fileListView->selectionModel();
+    if (!sel) {
+        return;
+    }
+
+    const QModelIndexList rows = sel->selectedRows();
+    if (rows.size() != 1) {
+        return;   // 防御：actOpen 本来就只在恰好一个选中时启用
+    }
+
+    openIndex(rows.first());
+}
+
+void MainWindow::openIndex(const QModelIndex &index)
+{
+    if (!index.isValid() || !fileSystemModel) {
+        return;
+    }
+
+    const QString path = fileSystemModel->filePath(index);
+    if (path.isEmpty()) {
+        return;
+    }
+
+    if (fileSystemModel->isDir(index)) {
+        changeDirectory(path);
+    } else {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    }
+}
+
+void MainWindow::onCopy()
+{
+    // 阶段 3 仅保留框架，不接入剪贴板 / 文件复制逻辑。
 }
